@@ -74,7 +74,7 @@ def fetch_notion_data():
         if date_prop:
             date_val = date_prop["start"]
             if date_prop.get("end"):
-                date_val += f"~{date_prop['end']}" # 縮短日期顯示長度
+                date_val += f"~{date_prop['end']}" 
         else:
             date_val = "未設定"
             
@@ -152,67 +152,94 @@ with tab2:
             
     with st.spinner("正在從 Notion 載入資料..."):
         df = fetch_notion_data()
+        
         if not df.empty:
-            cols_per_row = 3 
+            # --- 🔍 搜尋、篩選與排序區塊 ---
+            with st.expander("🔍 搜尋、篩選與排序", expanded=False):
+                filter_col1, filter_col2, filter_col3 = st.columns([2, 1, 1])
+                with filter_col1:
+                    search_query = st.text_input("關鍵字搜尋", placeholder="搜尋名稱或帳號...")
+                with filter_col2:
+                    min_fav = st.slider("最低喜愛程度", min_value=1, max_value=5, value=1)
+                with filter_col3:
+                    # 加入排序下拉選單
+                    sort_order = st.selectbox("📅 日期排序", ["由近到遠 (最新)", "由遠到近 (最舊)"])
             
-            for i in range(0, len(df), cols_per_row):
-                cols = st.columns(cols_per_row)
-                for j, col in enumerate(cols):
-                    if i + j < len(df):
-                        item = df.iloc[i + j]
-                        with col:
-                            with st.container(border=True):
-                                # 準備浮水印文字：優先顯示 IG，若無則顯示 Threads
-                                acc_text = ""
-                                if pd.notna(item["IG帳號"]) and str(item["IG帳號"]).strip():
-                                    acc_text = f"@{item['IG帳號']}"
-                                elif pd.notna(item["Threads帳號"]) and str(item["Threads帳號"]).strip():
-                                    acc_text = f"@{item['Threads帳號']}"
-                                
-                                # 建立帶有浮水印的 CSS 圖片模板 (加入點擊看全圖功能)
-                                def get_img_html(img_url, date_str, acc_str):
-                                    return f"""
-                                    <div style="width: 100%; padding-bottom: 100%; position: relative; border-radius: 8px; overflow: hidden; margin-bottom: 10px;">
-                                        <a href="{img_url}" target="_blank" title="點擊查看完整原圖">
-                                            <img src="{img_url}" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; cursor: pointer;">
-                                        </a>
-                                        <div style="position: absolute; bottom: 8px; left: 8px; background: rgba(20, 25, 30, 0.85); color: white; padding: 4px 10px; border-radius: 20px; font-size: 13px; font-weight: bold; pointer-events: none;">
-                                            {date_str} {acc_str}
+            # --- 執行資料過濾與排序邏輯 ---
+            filtered_df = df.copy()
+            
+            # 1. 過濾關鍵字 (不分大小寫)
+            if search_query:
+                mask_name = filtered_df["名稱"].str.contains(search_query, case=False, na=False)
+                mask_ig = filtered_df["IG帳號"].str.contains(search_query, case=False, na=False)
+                mask_threads = filtered_df["Threads帳號"].str.contains(search_query, case=False, na=False)
+                filtered_df = filtered_df[mask_name | mask_ig | mask_threads]
+                
+            # 2. 過濾星等
+            if min_fav > 1:
+                filtered_df = filtered_df[filtered_df["喜愛程度"] >= min_fav]
+
+            # 3. 日期排序
+            is_ascending = True if sort_order == "由遠到近 (最舊)" else False
+            filtered_df = filtered_df.sort_values(by="領取日期", ascending=is_ascending)
+
+            # --- 呈現過濾後的資料 ---
+            if filtered_df.empty:
+                st.warning("找不到符合篩選條件的應援品喔！")
+            else:
+                cols_per_row = 3 
+                for i in range(0, len(filtered_df), cols_per_row):
+                    cols = st.columns(cols_per_row)
+                    for j, col in enumerate(cols):
+                        if i + j < len(filtered_df):
+                            item = filtered_df.iloc[i + j]
+                            with col:
+                                with st.container(border=True):
+                                    acc_text = ""
+                                    if pd.notna(item["IG帳號"]) and str(item["IG帳號"]).strip():
+                                        acc_text = f"@{item['IG帳號']}"
+                                    elif pd.notna(item["Threads帳號"]) and str(item["Threads帳號"]).strip():
+                                        acc_text = f"@{item['Threads帳號']}"
+                                    
+                                    # 建立帶有浮水印的 CSS 圖片模板 (加入點擊看全圖功能)
+                                    def get_img_html(img_url, date_str, acc_str):
+                                        return f"""
+                                        <div style="width: 100%; padding-bottom: 100%; position: relative; border-radius: 8px; overflow: hidden; margin-bottom: 10px;">
+                                            <a href="{img_url}" target="_blank" title="點擊查看完整原圖">
+                                                <img src="{img_url}" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; cursor: pointer;">
+                                            </a>
+                                            <div style="position: absolute; bottom: 8px; left: 8px; background: rgba(20, 25, 30, 0.85); color: white; padding: 4px 10px; border-radius: 20px; font-size: 13px; font-weight: bold; pointer-events: none;">
+                                                {date_str} {acc_str}
+                                            </div>
                                         </div>
-                                    </div>
-                                    """
-                                
-                                # 渲染圖片區塊
-                                if pd.notna(item["圖片預覽"]) and str(item["圖片預覽"]).strip() != "":
-                                    urls = str(item["圖片預覽"]).split(",")
-                                    if len(urls) > 1:
-                                        # 多張圖片時，一樣長出小分頁，但內容替換成自訂 HTML
-                                        img_tabs = st.tabs([f"圖 {k+1}" for k in range(len(urls))])
-                                        for k, t in enumerate(img_tabs):
-                                            with t:
-                                                st.markdown(get_img_html(urls[k].strip(), item['領取日期'], acc_text), unsafe_allow_html=True)
+                                        """
+                                    
+                                    if pd.notna(item["圖片預覽"]) and str(item["圖片預覽"]).strip() != "":
+                                        urls = str(item["圖片預覽"]).split(",")
+                                        if len(urls) > 1:
+                                            img_tabs = st.tabs([f"圖 {k+1}" for k in range(len(urls))])
+                                            for k, t in enumerate(img_tabs):
+                                                with t:
+                                                    st.markdown(get_img_html(urls[k].strip(), item['領取日期'], acc_text), unsafe_allow_html=True)
+                                        else:
+                                            st.markdown(get_img_html(urls[0].strip(), item['領取日期'], acc_text), unsafe_allow_html=True)
                                     else:
-                                        # 單圖直接顯示自訂 HTML
-                                        st.markdown(get_img_html(urls[0].strip(), item['領取日期'], acc_text), unsafe_allow_html=True)
-                                else:
-                                    # 沒有照片的灰色替代底圖，一樣保留浮水印
-                                    empty_html = f"""
-                                    <div style="width: 100%; padding-bottom: 100%; position: relative; border-radius: 8px; background: #e0e4eb; margin-bottom: 10px;">
-                                        <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #7f8c8d; font-weight: bold;">
-                                            ── 沒有照片 ──
+                                        empty_html = f"""
+                                        <div style="width: 100%; padding-bottom: 100%; position: relative; border-radius: 8px; background: #e0e4eb; margin-bottom: 10px;">
+                                            <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #7f8c8d; font-weight: bold;">
+                                                ── 沒有照片 ──
+                                            </div>
+                                            <div style="position: absolute; bottom: 8px; left: 8px; background: rgba(20, 25, 30, 0.5); color: white; padding: 4px 10px; border-radius: 20px; font-size: 13px; font-weight: bold;">
+                                                {item['領取日期']} {acc_text}
+                                            </div>
                                         </div>
-                                        <div style="position: absolute; bottom: 8px; left: 8px; background: rgba(20, 25, 30, 0.5); color: white; padding: 4px 10px; border-radius: 20px; font-size: 13px; font-weight: bold;">
-                                            {item['領取日期']} {acc_text}
-                                        </div>
-                                    </div>
-                                    """
-                                    st.markdown(empty_html, unsafe_allow_html=True)
-                                
-                                # 圖片下方的資訊，讓排版盡量乾淨俐落
-                                st.markdown(f"**{item['名稱']}**")
-                                st.caption(f"喜愛程度：{'⭐' * item['喜愛程度']}")
-                                
-                                if pd.notna(item["貼文連結"]) and str(item["貼文連結"]).strip() != "":
-                                    st.link_button("🔗 前往貼文", item["貼文連結"], use_container_width=True)
+                                        """
+                                        st.markdown(empty_html, unsafe_allow_html=True)
+                                    
+                                    st.markdown(f"**{item['名稱']}**")
+                                    st.caption(f"喜愛程度：{'⭐' * item['喜愛程度']}")
+                                    
+                                    if pd.notna(item["貼文連結"]) and str(item["貼文連結"]).strip() != "":
+                                        st.link_button("🔗 前往貼文", item["貼文連結"], use_container_width=True)
         else:
             st.info("目前資料庫還是空的喔！趕快去新增第一筆吧！")
