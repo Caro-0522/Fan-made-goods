@@ -30,7 +30,7 @@ def upload_image_to_imgbb(image_bytes):
         return res.json()["data"]["url"]
     return None
 
-# --- Notion 寫入函式 (日期改為純文字寫入) ---
+# --- Notion 寫入函式 ---
 def create_notion_page(name, date_str, ig, threads, fav, img_url_str, post_link):
     url = "https://api.notion.com/v1/pages"
         
@@ -54,7 +54,7 @@ def create_notion_page(name, date_str, ig, threads, fav, img_url_str, post_link)
     }
     return requests.post(url, headers=NOTION_HEADERS, json=data)
 
-# --- Notion 讀取函式 (終極防呆升級版) ---
+# --- Notion 讀取函式 ---
 def fetch_notion_data():
     url = f"https://api.notion.com/v1/databases/{DATABASE_ID}/query"
     res = requests.post(url, headers=NOTION_HEADERS)
@@ -64,13 +64,11 @@ def fetch_notion_data():
     for result in data.get("results", []):
         props = result["properties"]
         
-        # 名稱防呆
         name_prop = props.get("名稱", {})
         name = "未命名"
         if name_prop.get("title"):
             name = "".join([t.get("plain_text", "") for t in name_prop.get("title", [])])
             
-        # 日期防呆 (徹底解決 KeyError)
         date_prop = props.get("領取日期", {})
         date_val = "未設定"
         if date_prop:
@@ -84,24 +82,19 @@ def fetch_notion_data():
                 if d.get("end"):
                     date_val += f", {d['end']}"
                     
-        # IG 防呆
         ig_prop = props.get("IG帳號", {})
         ig = "".join([rt.get("plain_text", "") for rt in ig_prop.get("rich_text", [])]) if ig_prop.get("type") == "rich_text" else ""
         
-        # Threads 防呆
         threads_prop = props.get("Threads帳號", {})
         threads = "".join([rt.get("plain_text", "") for rt in threads_prop.get("rich_text", [])]) if threads_prop.get("type") == "rich_text" else ""
         
-        # 喜愛程度防呆
         fav = props.get("喜愛程度", {}).get("number", 3)
         if fav is None:
             fav = 3
             
-        # 圖片網址防呆
         img_prop = props.get("圖片網址", {})
         img_url_raw = "".join([rt.get("plain_text", "") for rt in img_prop.get("rich_text", [])]) if img_prop.get("type") == "rich_text" else None
         
-        # 貼文連結防呆
         link_prop = props.get("貼文連結", {})
         post_link = link_prop.get("url") if link_prop.get("type") == "url" else None
         
@@ -121,23 +114,32 @@ def fetch_notion_data():
 st.title("🎁 應援品領取小幫手")
 tab1, tab2 = st.tabs(["➕ 新增登記", "🖼️ 畫廊檢視"])
 
-# 產生未來一個月的日期清單供選擇
-today = datetime.date.today()
-date_options = [(today + datetime.timedelta(days=i)).strftime("%Y-%m-%d") for i in range(-5, 35)]
-
 # ================= 分頁 1：新增資料 =================
 with tab1:
     with st.container(border=True):
         with st.form("add_item_form", clear_on_submit=True):
+            item_name = st.text_input("應援品名稱 *", placeholder="例如：宋威龍生日杯套")
+            
             col1, col2 = st.columns([1, 1])
             with col1:
-                item_name = st.text_input("應援品名稱 *", placeholder="例如：宋威龍生日杯套")
                 ig_acc = st.text_input("IG 帳號", placeholder="username")
                 post_link = st.text_input("🔗 貼文連結", placeholder="https://...")
             with col2:
                 threads_acc = st.text_input("Threads 帳號", placeholder="username")
-                pickup_dates = st.multiselect("領取日期 (可多選不連續天數) *", options=date_options, default=[today.strftime("%Y-%m-%d")])
                 preference = st.slider("喜愛程度", min_value=1, max_value=5, value=3)
+            
+            # 📅 日曆選擇區塊 (支援跳著選)
+            st.markdown("**📅 領取日期 (支援跳著發，請點擊日曆選擇)**")
+            d_col1, d_col2, d_col3 = st.columns(3)
+            with d_col1:
+                # 第一天預設為今天
+                d1 = st.date_input("第一天 *", value=datetime.date.today())
+            with d_col2:
+                # 第二天預設為空
+                d2 = st.date_input("第二天 (選填)", value=None)
+            with d_col3:
+                # 第三天預設為空
+                d3 = st.date_input("第三天 (選填)", value=None)
             
             uploaded_files = st.file_uploader("📷 上傳應援品照片 (可多選)", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
             submitted = st.form_submit_button("💾 送出至 Notion", use_container_width=True)
@@ -145,11 +147,28 @@ with tab1:
             if submitted:
                 if not item_name:
                     st.error("請輸入「應援品名稱」！")
-                elif not pickup_dates:
-                    st.error("請至少選擇一天「領取日期」！")
+                elif not d1:
+                    st.error("請至少選擇「第一天」的領取日期！")
                 else:
                     with st.spinner("正在上傳資料與圖片，請稍候..."):
-                        date_str = ", ".join(sorted(pickup_dates))
+                        
+                        # 把有填寫的日曆日期收集起來
+                        dates_list = []
+                        # d1, d2, d3 可能回傳的是單一日期或日期區間的 Tuple
+                        for d in [d1, d2, d3]:
+                            if d:
+                                if isinstance(d, tuple):
+                                    # 如果使用者選了區間 (Start to End)，組合起來
+                                    if len(d) == 2:
+                                        dates_list.append(f"{d[0].strftime('%Y-%m-%d')} ~ {d[1].strftime('%Y-%m-%d')}")
+                                    else:
+                                        dates_list.append(d[0].strftime('%Y-%m-%d'))
+                                else:
+                                    # 單一日期
+                                    dates_list.append(d.strftime('%Y-%m-%d'))
+                        
+                        # 用逗號串接所有的日期
+                        date_str = ", ".join(dates_list)
                         
                         final_img_urls = []
                         if uploaded_files:
@@ -179,12 +198,12 @@ with tab2:
         df = fetch_notion_data()
         
         if not df.empty:
-            # 整理出資料庫裡所有出現過的日期
+            # 整理出資料庫裡所有出現過的日期供篩選
             all_dates = []
             for d in df["領取日期"]:
                 if pd.notna(d) and d != "未設定":
                     parts = str(d).replace("~", ",").split(",")
-                    all_dates.extend([p.strip() for p in parts])
+                    all_dates.extend([p.strip() for p in parts if p.strip()])
             unique_dates = sorted(list(set(all_dates)))
 
             # --- 🔍 搜尋、篩選與排序區塊 ---
