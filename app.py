@@ -46,11 +46,9 @@ def create_notion_page(name, start_date, end_date, ig, threads, fav, img_url_str
         "喜愛程度": {"number": fav}
     }
     
-    # 寫入多張圖片網址 (改為 rich_text 文字格式)
     if img_url_str:
         properties["圖片網址"] = {"rich_text": [{"text": {"content": img_url_str}}]}
         
-    # 寫入貼文連結
     if post_link:
         properties["貼文連結"] = {"url": post_link}
         
@@ -76,17 +74,15 @@ def fetch_notion_data():
         if date_prop:
             date_val = date_prop["start"]
             if date_prop.get("end"):
-                date_val += f" ~ {date_prop['end']}"
+                date_val += f"~{date_prop['end']}" # 縮短日期顯示長度
         else:
-            date_val = "未設定日期"
+            date_val = "未設定"
             
         ig = props["IG帳號"]["rich_text"][0]["text"]["content"] if props["IG帳號"]["rich_text"] else ""
         threads = props["Threads帳號"]["rich_text"][0]["text"]["content"] if props["Threads帳號"]["rich_text"] else ""
         fav = props["喜愛程度"]["number"]
         
-        # 抓取圖片網址字串 (從 rich_text 讀取)
         img_url_raw = props["圖片網址"]["rich_text"][0]["text"]["content"] if props.get("圖片網址") and props["圖片網址"].get("rich_text") else None
-        
         post_link = props["貼文連結"]["url"] if props.get("貼文連結") and props["貼文連結"].get("url") else None
         
         items.append({
@@ -112,14 +108,13 @@ with tab1:
             col1, col2 = st.columns([1, 1])
             with col1:
                 item_name = st.text_input("應援品名稱 *", placeholder="例如：宋威龍生日杯套")
-                ig_acc = st.text_input("IG 帳號", placeholder="@username")
+                ig_acc = st.text_input("IG 帳號", placeholder="username")
                 post_link = st.text_input("🔗 貼文連結", placeholder="https://...")
             with col2:
-                threads_acc = st.text_input("Threads 帳號", placeholder="@username")
+                threads_acc = st.text_input("Threads 帳號", placeholder="username")
                 pickup_date = st.date_input("領取日期 (點兩下可選區間) *", value=[datetime.date.today()])
                 preference = st.slider("喜愛程度", min_value=1, max_value=5, value=3)
             
-            # 開啟 accept_multiple_files 允許選擇多張照片
             uploaded_files = st.file_uploader("📷 上傳應援品照片 (可多選)", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
             submitted = st.form_submit_button("💾 送出至 Notion", use_container_width=True)
             
@@ -131,7 +126,6 @@ with tab1:
                         start_d = pickup_date[0]
                         end_d = pickup_date[1] if len(pickup_date) > 1 else None
                         
-                        # 處理多張圖片上傳
                         final_img_urls = []
                         if uploaded_files:
                             for file in uploaded_files:
@@ -139,9 +133,7 @@ with tab1:
                                 if url:
                                     final_img_urls.append(url)
                         
-                        # 將多個網址用逗號串接成一個字串
                         img_url_str = ",".join(final_img_urls) if final_img_urls else None
-                        
                         res = create_notion_page(item_name, start_d, end_d, ig_acc, threads_acc, preference, img_url_str, post_link)
                         
                     if res.status_code == 200:
@@ -169,37 +161,55 @@ with tab2:
                     if i + j < len(df):
                         item = df.iloc[i + j]
                         with col:
-                            # 拿掉 height 讓高度在手機上能自然伸展
                             with st.container(border=True):
-                                # 圖片處理 (支援多圖分頁)
+                                # 準備浮水印文字：優先顯示 IG，若無則顯示 Threads
+                                acc_text = ""
+                                if pd.notna(item["IG帳號"]) and str(item["IG帳號"]).strip():
+                                    acc_text = f"@{item['IG帳號']}"
+                                elif pd.notna(item["Threads帳號"]) and str(item["Threads帳號"]).strip():
+                                    acc_text = f"@{item['Threads帳號']}"
+                                
+                                # 建立帶有浮水印的 CSS 圖片模板
+                                def get_img_html(img_url, date_str, acc_str):
+                                    return f"""
+                                    <div style="width: 100%; padding-bottom: 100%; position: relative; border-radius: 8px; overflow: hidden; margin-bottom: 10px;">
+                                        <img src="{img_url}" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover;">
+                                        <div style="position: absolute; bottom: 8px; left: 8px; background: rgba(20, 25, 30, 0.85); color: white; padding: 4px 10px; border-radius: 20px; font-size: 13px; font-weight: bold;">
+                                            {date_str} {acc_str}
+                                        </div>
+                                    </div>
+                                    """
+                                
+                                # 渲染圖片區塊
                                 if pd.notna(item["圖片預覽"]) and str(item["圖片預覽"]).strip() != "":
                                     urls = str(item["圖片預覽"]).split(",")
                                     if len(urls) > 1:
-                                        # 如果有多張圖，產生手動點擊的小分頁
+                                        # 多張圖片時，一樣長出小分頁，但內容替換成自訂 HTML
                                         img_tabs = st.tabs([f"圖 {k+1}" for k in range(len(urls))])
                                         for k, t in enumerate(img_tabs):
                                             with t:
-                                                st.image(urls[k].strip(), use_container_width=True)
+                                                st.markdown(get_img_html(urls[k].strip(), item['領取日期'], acc_text), unsafe_allow_html=True)
                                     else:
-                                        # 只有一張圖就直接顯示
-                                        st.image(urls[0].strip(), use_container_width=True)
+                                        # 單圖直接顯示自訂 HTML
+                                        st.markdown(get_img_html(urls[0].strip(), item['領取日期'], acc_text), unsafe_allow_html=True)
                                 else:
-                                    st.info("── 沒有照片 ──")
+                                    # 沒有照片的灰色替代底圖，一樣保留浮水印
+                                    empty_html = f"""
+                                    <div style="width: 100%; padding-bottom: 100%; position: relative; border-radius: 8px; background: #e0e4eb; margin-bottom: 10px;">
+                                        <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #7f8c8d; font-weight: bold;">
+                                            ── 沒有照片 ──
+                                        </div>
+                                        <div style="position: absolute; bottom: 8px; left: 8px; background: rgba(20, 25, 30, 0.5); color: white; padding: 4px 10px; border-radius: 20px; font-size: 13px; font-weight: bold;">
+                                            {item['領取日期']} {acc_text}
+                                        </div>
+                                    </div>
+                                    """
+                                    st.markdown(empty_html, unsafe_allow_html=True)
                                 
-                                # 名稱與日期
-                                st.markdown(f"#### {item['名稱']}")
-                                st.markdown(f"**📅 {item['領取日期']}**")
+                                # 圖片下方的資訊，讓排版盡量乾淨俐落
+                                st.markdown(f"**{item['名稱']}**")
+                                st.caption(f"喜愛程度：{'⭐' * item['喜愛程度']}")
                                 
-                                # 帳號
-                                if pd.notna(item["IG帳號"]) and str(item["IG帳號"]).strip() != "":
-                                    st.caption(f"IG: {item['IG帳號']}")
-                                if pd.notna(item["Threads帳號"]) and str(item["Threads帳號"]).strip() != "":
-                                    st.caption(f"Threads: {item['Threads帳號']}")
-                                    
-                                # 喜愛程度
-                                st.markdown(f"喜愛程度：{'⭐' * item['喜愛程度']}")
-                                
-                                # 跳轉按鈕
                                 if pd.notna(item["貼文連結"]) and str(item["貼文連結"]).strip() != "":
                                     st.link_button("🔗 前往貼文", item["貼文連結"], use_container_width=True)
         else:
