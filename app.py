@@ -6,7 +6,6 @@ import datetime
 # --- 網頁基本設定 ---
 st.set_page_config(page_title="應援品領取小幫手", page_icon="🎁", layout="wide")
 
-# --- 讀取環境變數 ---
 try:
     NOTION_TOKEN = st.secrets["NOTION_TOKEN"]
     DATABASE_ID = st.secrets["DATABASE_ID"]
@@ -32,7 +31,7 @@ def upload_image_to_imgbb(image_bytes):
     return None
 
 # --- Notion 寫入函式 ---
-def create_notion_page(name, start_date, end_date, ig, threads, fav, img_url, post_link):
+def create_notion_page(name, start_date, end_date, ig, threads, fav, img_url_str, post_link):
     url = "https://api.notion.com/v1/pages"
     
     date_data = {"start": str(start_date)}
@@ -47,9 +46,9 @@ def create_notion_page(name, start_date, end_date, ig, threads, fav, img_url, po
         "喜愛程度": {"number": fav}
     }
     
-    # 寫入圖片網址
-    if img_url:
-        properties["圖片網址"] = {"url": img_url}
+    # 寫入多張圖片網址 (改為 rich_text 文字格式)
+    if img_url_str:
+        properties["圖片網址"] = {"rich_text": [{"text": {"content": img_url_str}}]}
         
     # 寫入貼文連結
     if post_link:
@@ -85,14 +84,14 @@ def fetch_notion_data():
         threads = props["Threads帳號"]["rich_text"][0]["text"]["content"] if props["Threads帳號"]["rich_text"] else ""
         fav = props["喜愛程度"]["number"]
         
-        img_url = props["圖片網址"]["url"] if props.get("圖片網址") and props["圖片網址"].get("url") else None
+        # 抓取圖片網址字串 (從 rich_text 讀取)
+        img_url_raw = props["圖片網址"]["rich_text"][0]["text"]["content"] if props.get("圖片網址") and props["圖片網址"].get("rich_text") else None
         
-        # 抓取貼文連結
         post_link = props["貼文連結"]["url"] if props.get("貼文連結") and props["貼文連結"].get("url") else None
         
         items.append({
             "名稱": name,
-            "圖片預覽": img_url,
+            "圖片預覽": img_url_raw,
             "領取日期": date_val,
             "IG帳號": ig,
             "Threads帳號": threads,
@@ -114,14 +113,14 @@ with tab1:
             with col1:
                 item_name = st.text_input("應援品名稱 *", placeholder="例如：宋威龍生日杯套")
                 ig_acc = st.text_input("IG 帳號", placeholder="@username")
-                # 新增網址輸入框
                 post_link = st.text_input("🔗 貼文連結", placeholder="https://...")
             with col2:
                 threads_acc = st.text_input("Threads 帳號", placeholder="@username")
                 pickup_date = st.date_input("領取日期 (點兩下可選區間) *", value=[datetime.date.today()])
                 preference = st.slider("喜愛程度", min_value=1, max_value=5, value=3)
             
-            uploaded_file = st.file_uploader("📷 上傳應援品照片", type=["jpg", "jpeg", "png"])
+            # 開啟 accept_multiple_files 允許選擇多張照片
+            uploaded_files = st.file_uploader("📷 上傳應援品照片 (可多選)", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
             submitted = st.form_submit_button("💾 送出至 Notion", use_container_width=True)
             
             if submitted:
@@ -132,12 +131,18 @@ with tab1:
                         start_d = pickup_date[0]
                         end_d = pickup_date[1] if len(pickup_date) > 1 else None
                         
-                        final_img_url = None
-                        if uploaded_file is not None:
-                            final_img_url = upload_image_to_imgbb(uploaded_file.getvalue())
+                        # 處理多張圖片上傳
+                        final_img_urls = []
+                        if uploaded_files:
+                            for file in uploaded_files:
+                                url = upload_image_to_imgbb(file.getvalue())
+                                if url:
+                                    final_img_urls.append(url)
                         
-                        # 把貼文連結一起傳給 API
-                        res = create_notion_page(item_name, start_d, end_d, ig_acc, threads_acc, preference, final_img_url, post_link)
+                        # 將多個網址用逗號串接成一個字串
+                        img_url_str = ",".join(final_img_urls) if final_img_urls else None
+                        
+                        res = create_notion_page(item_name, start_d, end_d, ig_acc, threads_acc, preference, img_url_str, post_link)
                         
                     if res.status_code == 200:
                         st.success(f"🎉 成功新增：{item_name}！")
@@ -164,10 +169,20 @@ with tab2:
                     if i + j < len(df):
                         item = df.iloc[i + j]
                         with col:
+                            # 拿掉 height 讓高度在手機上能自然伸展
                             with st.container(border=True):
-                                # 圖片 (加上 pd.notna 嚴格檢查)
+                                # 圖片處理 (支援多圖分頁)
                                 if pd.notna(item["圖片預覽"]) and str(item["圖片預覽"]).strip() != "":
-                                    st.image(item["圖片預覽"], use_container_width=True)
+                                    urls = str(item["圖片預覽"]).split(",")
+                                    if len(urls) > 1:
+                                        # 如果有多張圖，產生手動點擊的小分頁
+                                        img_tabs = st.tabs([f"圖 {k+1}" for k in range(len(urls))])
+                                        for k, t in enumerate(img_tabs):
+                                            with t:
+                                                st.image(urls[k].strip(), use_container_width=True)
+                                    else:
+                                        # 只有一張圖就直接顯示
+                                        st.image(urls[0].strip(), use_container_width=True)
                                 else:
                                     st.info("── 沒有照片 ──")
                                 
@@ -184,7 +199,7 @@ with tab2:
                                 # 喜愛程度
                                 st.markdown(f"喜愛程度：{'⭐' * item['喜愛程度']}")
                                 
-                                # 跳轉按鈕 (加上 pd.notna 嚴格檢查)
+                                # 跳轉按鈕
                                 if pd.notna(item["貼文連結"]) and str(item["貼文連結"]).strip() != "":
                                     st.link_button("🔗 前往貼文", item["貼文連結"], use_container_width=True)
         else:
