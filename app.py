@@ -165,8 +165,8 @@ with tab2:
                         item = df.iloc[i + j]
                         with col:
                             with st.container(border=True):
-                                # 圖片
-                                if item["圖片預覽"]:
+                                # 圖片 (加上 pd.notna 嚴格檢查)
+                                if pd.notna(item["圖片預覽"]) and str(item["圖片預覽"]).strip() != "":
                                     st.image(item["圖片預覽"], use_container_width=True)
                                 else:
                                     st.info("── 沒有照片 ──")
@@ -176,16 +176,16 @@ with tab2:
                                 st.markdown(f"**📅 {item['領取日期']}**")
                                 
                                 # 帳號
-                                if item["IG帳號"]:
+                                if pd.notna(item["IG帳號"]) and str(item["IG帳號"]).strip() != "":
                                     st.caption(f"IG: {item['IG帳號']}")
-                                if item["Threads帳號"]:
+                                if pd.notna(item["Threads帳號"]) and str(item["Threads帳號"]).strip() != "":
                                     st.caption(f"Threads: {item['Threads帳號']}")
                                     
                                 # 喜愛程度
                                 st.markdown(f"喜愛程度：{'⭐' * item['喜愛程度']}")
                                 
-                                # 跳轉按鈕
-                                if item["貼文連結"]:
+                                # 跳轉按鈕 (加上 pd.notna 嚴格檢查)
+                                if pd.notna(item["貼文連結"]) and str(item["貼文連結"]).strip() != "":
                                     st.link_button("🔗 前往貼文", item["貼文連結"], use_container_width=True)
         else:
             st.info("目前資料庫還是空的喔！趕快去新增第一筆吧！")
