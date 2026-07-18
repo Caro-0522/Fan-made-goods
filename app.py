@@ -30,17 +30,14 @@ def upload_image_to_imgbb(image_bytes):
         return res.json()["data"]["url"]
     return None
 
-# --- Notion 寫入函式 ---
-def create_notion_page(name, start_date, end_date, ig, threads, fav, img_url_str, post_link):
+# --- Notion 寫入函式 (日期改為純文字寫入) ---
+def create_notion_page(name, date_str, ig, threads, fav, img_url_str, post_link):
     url = "https://api.notion.com/v1/pages"
-    
-    date_data = {"start": str(start_date)}
-    if end_date:
-        date_data["end"] = str(end_date)
         
     properties = {
         "名稱": {"title": [{"text": {"content": name}}]},
-        "領取日期": {"date": date_data},
+        # 這裡配合 Notion 屬性更改，改用 rich_text 寫入文字
+        "領取日期": {"rich_text": [{"text": {"content": date_str}}]},
         "IG帳號": {"rich_text": [{"text": {"content": ig}}]},
         "Threads帳號": {"rich_text": [{"text": {"content": threads}}]},
         "喜愛程度": {"number": fav}
@@ -70,13 +67,17 @@ def fetch_notion_data():
         
         name = props["名稱"]["title"][0]["text"]["content"] if props["名稱"]["title"] else "未命名"
         
-        date_prop = props["領取日期"]["date"]
+        # 讀取日期 (相容新的純文字格式與舊的日期格式防呆)
+        date_prop = props.get("領取日期", {})
+        date_val = "未設定"
         if date_prop:
-            date_val = date_prop["start"]
-            if date_prop.get("end"):
-                date_val += f"~{date_prop['end']}" 
-        else:
-            date_val = "未設定"
+            if date_prop.get("type") == "rich_text":
+                date_val = date_prop["rich_text"][0]["text"]["content"] if date_prop["rich_text"] else "未設定"
+            elif date_prop.get("type") == "date" and date_prop["date"]:
+                d = date_prop["date"]
+                date_val = d["start"]
+                if d.get("end"):
+                    date_val += f", {d['end']}"
             
         ig = props["IG帳號"]["rich_text"][0]["text"]["content"] if props["IG帳號"]["rich_text"] else ""
         threads = props["Threads帳號"]["rich_text"][0]["text"]["content"] if props["Threads帳號"]["rich_text"] else ""
@@ -101,6 +102,10 @@ def fetch_notion_data():
 st.title("🎁 應援品領取小幫手")
 tab1, tab2 = st.tabs(["➕ 新增登記", "🖼️ 畫廊檢視"])
 
+# 產生未來一個月的日期清單供選擇
+today = datetime.date.today()
+date_options = [(today + datetime.timedelta(days=i)).strftime("%Y-%m-%d") for i in range(-5, 35)]
+
 # ================= 分頁 1：新增資料 =================
 with tab1:
     with st.container(border=True):
@@ -112,7 +117,8 @@ with tab1:
                 post_link = st.text_input("🔗 貼文連結", placeholder="https://...")
             with col2:
                 threads_acc = st.text_input("Threads 帳號", placeholder="username")
-                pickup_date = st.date_input("領取日期 (點兩下可選區間) *", value=[datetime.date.today()])
+                # 改為多選器，允許選擇不連續日期
+                pickup_dates = st.multiselect("領取日期 (可多選不連續天數) *", options=date_options, default=[today.strftime("%Y-%m-%d")])
                 preference = st.slider("喜愛程度", min_value=1, max_value=5, value=3)
             
             uploaded_files = st.file_uploader("📷 上傳應援品照片 (可多選)", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
@@ -121,10 +127,12 @@ with tab1:
             if submitted:
                 if not item_name:
                     st.error("請輸入「應援品名稱」！")
+                elif not pickup_dates:
+                    st.error("請至少選擇一天「領取日期」！")
                 else:
                     with st.spinner("正在上傳資料與圖片，請稍候..."):
-                        start_d = pickup_date[0]
-                        end_d = pickup_date[1] if len(pickup_date) > 1 else None
+                        # 將多個日期排序並用逗號串接成字串
+                        date_str = ", ".join(sorted(pickup_dates))
                         
                         final_img_urls = []
                         if uploaded_files:
@@ -134,7 +142,7 @@ with tab1:
                                     final_img_urls.append(url)
                         
                         img_url_str = ",".join(final_img_urls) if final_img_urls else None
-                        res = create_notion_page(item_name, start_d, end_d, ig_acc, threads_acc, preference, img_url_str, post_link)
+                        res = create_notion_page(item_name, date_str, ig, threads, fav, img_url_str, post_link)
                         
                     if res.status_code == 200:
                         st.success(f"🎉 成功新增：{item_name}！")
@@ -154,32 +162,48 @@ with tab2:
         df = fetch_notion_data()
         
         if not df.empty:
-            # --- 🔍 搜尋、篩選與排序區塊 ---
+            # --- 整理出資料庫裡所有出現過的日期 ---
+            all_dates = []
+            for d in df["領取日期"]:
+                if pd.notna(d) and d != "未設定":
+                    # 將逗號或波浪號隔開的日期拆開
+                    parts = str(d).replace("~", ",").split(",")
+                    all_dates.extend([p.strip() for p in parts])
+            unique_dates = sorted(list(set(all_dates)))
+
+            # --- 🔍 搜尋、篩選與排序區塊 (優化手機版面排版) ---
             with st.expander("🔍 搜尋、篩選與排序", expanded=False):
-                filter_col1, filter_col2, filter_col3 = st.columns([2, 1, 1])
-                with filter_col1:
+                row1_col1, row1_col2 = st.columns(2)
+                with row1_col1:
                     search_query = st.text_input("關鍵字搜尋", placeholder="搜尋名稱或帳號...")
-                with filter_col2:
+                with row1_col2:
+                    filter_date = st.selectbox("📅 選擇領取日", ["全部"] + unique_dates)
+                    
+                row2_col1, row2_col2 = st.columns(2)
+                with row2_col1:
                     min_fav = st.slider("最低喜愛程度", min_value=1, max_value=5, value=1)
-                with filter_col3:
-                    # 加入排序下拉選單
-                    sort_order = st.selectbox("📅 日期排序", ["由近到遠 (最新)", "由遠到近 (最舊)"])
+                with row2_col2:
+                    sort_order = st.selectbox("⏳ 日期排序", ["由近到遠 (最新)", "由遠到近 (最舊)"])
             
             # --- 執行資料過濾與排序邏輯 ---
             filtered_df = df.copy()
             
-            # 1. 過濾關鍵字 (不分大小寫)
+            # 1. 過濾關鍵字
             if search_query:
                 mask_name = filtered_df["名稱"].str.contains(search_query, case=False, na=False)
                 mask_ig = filtered_df["IG帳號"].str.contains(search_query, case=False, na=False)
                 mask_threads = filtered_df["Threads帳號"].str.contains(search_query, case=False, na=False)
                 filtered_df = filtered_df[mask_name | mask_ig | mask_threads]
                 
-            # 2. 過濾星等
+            # 2. 過濾特定領取日 (精準比對)
+            if filter_date != "全部":
+                filtered_df = filtered_df[filtered_df["領取日期"].str.contains(filter_date, na=False)]
+
+            # 3. 過濾星等
             if min_fav > 1:
                 filtered_df = filtered_df[filtered_df["喜愛程度"] >= min_fav]
 
-            # 3. 日期排序
+            # 4. 日期排序
             is_ascending = True if sort_order == "由遠到近 (最舊)" else False
             filtered_df = filtered_df.sort_values(by="領取日期", ascending=is_ascending)
 
@@ -201,7 +225,7 @@ with tab2:
                                     elif pd.notna(item["Threads帳號"]) and str(item["Threads帳號"]).strip():
                                         acc_text = f"@{item['Threads帳號']}"
                                     
-                                    # 建立帶有浮水印的 CSS 圖片模板 (加入點擊看全圖功能)
+                                    # 帶有浮水印與點擊看全圖的 HTML
                                     def get_img_html(img_url, date_str, acc_str):
                                         return f"""
                                         <div style="width: 100%; padding-bottom: 100%; position: relative; border-radius: 8px; overflow: hidden; margin-bottom: 10px;">
