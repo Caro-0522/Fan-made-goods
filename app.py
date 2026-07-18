@@ -169,12 +169,14 @@ with tab2:
                                 elif pd.notna(item["Threads帳號"]) and str(item["Threads帳號"]).strip():
                                     acc_text = f"@{item['Threads帳號']}"
                                 
-                                # 建立帶有浮水印的 CSS 圖片模板
+                                # 建立帶有浮水印的 CSS 圖片模板 (加入點擊看全圖功能)
                                 def get_img_html(img_url, date_str, acc_str):
                                     return f"""
                                     <div style="width: 100%; padding-bottom: 100%; position: relative; border-radius: 8px; overflow: hidden; margin-bottom: 10px;">
-                                        <img src="{img_url}" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover;">
-                                        <div style="position: absolute; bottom: 8px; left: 8px; background: rgba(20, 25, 30, 0.85); color: white; padding: 4px 10px; border-radius: 20px; font-size: 13px; font-weight: bold;">
+                                        <a href="{img_url}" target="_blank" title="點擊查看完整原圖">
+                                            <img src="{img_url}" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; cursor: pointer;">
+                                        </a>
+                                        <div style="position: absolute; bottom: 8px; left: 8px; background: rgba(20, 25, 30, 0.85); color: white; padding: 4px 10px; border-radius: 20px; font-size: 13px; font-weight: bold; pointer-events: none;">
                                             {date_str} {acc_str}
                                         </div>
                                     </div>
